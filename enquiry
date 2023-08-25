@@ -1,0 +1,680 @@
+const database = require('../orm/sql/database');
+const enquiryquery = require("../orm/sql/enquiryquery");
+const enquiryrepository = require('../../domain/enquiry/enquiryrepository');
+const axiosfunction = require("../../utility/axioscommon");
+const apicommoncontroller = require("../../utility/apicommoncontroller");
+const config = require('../../../config');
+// A variable to store a pathname (not initialized here).
+let pathname;
+// A variable to store a function name (not initialized here).
+let fname;
+// A variable to store a URL (not initialized here).
+let url;
+// An array to store queries.
+let queries = [];
+// A variable to store user rights (not initialized here).
+let rights;
+const code = config.Enquiry_API_code;
+module.exports = class extends enquiryrepository {
+    constructor() {
+        super();
+    }
+
+    async getenquirybyid(token, guid, appversion, clientid, servicelocator) {
+        pathname = `/${appversion}/infrastructure/repositories/enquiries`;
+        url = config.enquiry_services_endpoint + `/${appversion}/enquiries/${guid}`;
+        fname = "getenquirybyid";
+        queries = [];
+        rights = "read";
+        try {
+            // call this to get database credentials
+            let data = await axiosfunction.apivalidationfunction(token, code, rights, clientid);
+            let enquiryresult;
+            let enquirylist = { Enquiries: {} }; // empty enquirylist object for adding recordsets
+            // if data apierror is undefined then get enquiry details by guid
+            if (data.APIError === undefined) {
+                const key = data.dbdata.data.sha1encryptkey;
+                //call updatefromdatabase of database in orm with dbdata and query
+                queries.push({ "Enquiry SP": `${await enquiryquery.getenquirybyid(guid)}` });
+                enquiryresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getenquirybyid(guid), appversion, url);
+                if (enquiryresult?.recordset?.length > 0) {
+                    //getting Currency detail
+                    queries.push({ "Currency SP": `${await enquiryquery.getcurrencybyid(enquiryresult?.recordset[0]["currencyid"] ?? NULL)}` });
+                    let currencyresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getcurrencybyid(enquiryresult?.recordset[0]["currencyid"] ?? NULL), appversion, url);
+                    let currencydata = {};
+                    if (currencyresult?.recordset?.length > 0) {
+                        currencydata = {
+                            "CurrencyId": currencyresult?.recordset[0]["currencyguid"] == "" || currencyresult?.recordset[0]["currencyguid"] == null ? null : currencyresult?.recordset[0]["currencyguid"].toLowerCase(),
+                            "Name": currencyresult?.recordset[0]["currencyname"] == "" || currencyresult?.recordset[0]["currencyname"] == null ? null : currencyresult?.recordset[0]["currencyname"],
+                            "Code": currencyresult?.recordset[0]["currencycode"] == "" || currencyresult?.recordset[0]["currencycode"] == null ? null : currencyresult?.recordset[0]["currencycode"],
+                            "Symbol": currencyresult?.recordset[0]["currencysymbol"] == "" || currencyresult?.recordset[0]["currencysymbol"] == null ? null : currencyresult?.recordset[0]["currencysymbol"],
+                            "IsDefault": currencyresult?.recordset[0]["flagdefault"] == "" || currencyresult?.recordset[0]["flagdefault"] == null ? null : currencyresult?.recordset[0]["flagdefault"],
+                            "Active": currencyresult?.recordset[0]["flagactive"] == "" || currencyresult?.recordset[0]["flagactive"] == null ? null : currencyresult?.recordset[0]["flagactive"]
+                        };
+                    }
+                    //getting user data for assigned to user,created by user id, updated by user, shared with users
+                    let userids = [enquiryresult?.recordset[0]["assigntouserid"], enquiryresult?.recordset[0]["sharedwithids"], enquiryresult?.recordset[0]["createdbyuserid"], enquiryresult?.recordset[0]["updatedbyuserid"]];
+                    queries.push({ "User SP": `${await enquiryquery.getuserbyids(userids)}` });
+                    let userresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getuserbyids(userids), appversion, url);
+                    let assigntouseriddata = {};
+                    let createdbyuseriddata = {};
+                    let updatedbyuseriddata = {};
+                    let sharedwithidsdata = { User: [] };
+                    userresult?.recordset?.map((user) => {
+                        //assigned to data
+                        if (user.userid == enquiryresult?.recordset[0]["assigntouserid"]) {
+                            assigntouseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //created by user
+                        if (user.userid == enquiryresult?.recordset[0]["createdbyuserid"]) {
+                            createdbyuseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //updated by user
+                        if (user.userid == enquiryresult?.recordset[0]["updatedbyuserid"]) {
+                            updatedbyuseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //share with users
+                        enquiryresult?.recordset[0]["sharedwithids"].split(",").map((shareuser) => {
+                            if (user.userid == shareuser) {
+                                sharedwithidsdata.User.push({
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                });
+                            }
+                        });
+                    });
+
+                    //get customer data
+                    let customerdata = {};
+                    queries.push({ "Customer SP": `${await enquiryquery.getcustomerbycustomerid(key, enquiryresult?.recordset[0]["customerid"])}` });
+                    let customerresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getcustomerbycustomerid(key, enquiryresult?.recordset[0]["customerid"]), appversion, url);
+                    if (customerresult?.recordset?.length > 0) {
+                        customerdata = {
+                            "FirstName": customerresult?.recordset?.[0]["firstname"] == "" || customerresult?.recordset?.[0]["firstname"] == null ? null : customerresult?.recordset?.[0]["firstname"],
+                            "MiddleName": customerresult?.recordset?.[0]["middlename"] == "" || customerresult?.recordset?.[0]["middlename"] == null ? null : customerresult?.recordset?.[0]["middlename"],
+                            "LastName": customerresult?.recordset?.[0]["lastname"] == "" || customerresult?.recordset?.[0]["lastname"] == null ? null : customerresult?.recordset?.[0]["lastname"],
+                            "Gender": customerresult?.recordset?.[0]["gender"] == "" || customerresult?.recordset?.[0]["gender"] == null ? null : customerresult?.recordset?.[0]["gender"],
+                            "Email": customerresult?.recordset?.[0]["email"] == "" || customerresult?.recordset?.[0]["email"] == null ? null : customerresult?.recordset?.[0]["email"]
+                        };
+                    }
+
+                    //get agent data
+                    let agentdata = {};
+                    queries.push({ "Agent SP": `${await enquiryquery.getagentbyagentid(enquiryresult?.recordset[0]["agentid"])}` });
+                    let agentresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getagentbyagentid(enquiryresult?.recordset[0]["agentid"]), appversion, url);
+                    if (agentresult?.recordset?.length > 0) {
+                        agentdata = {
+                            "CompanyName": agentresult?.recordset?.[0]["Company"] == "" || agentresult?.recordset?.[0]["Company"] == null ? null : agentresult?.recordset?.[0]["Company"],
+                            "Email": agentresult?.recordset?.[0]["email"] == "" || agentresult?.recordset?.[0]["email"] == null ? null : agentresult?.recordset?.[0]["email"],
+                            "Name": agentresult?.recordset?.[0]["agentname"] == "" || agentresult?.recordset?.[0]["agentname"] == null ? null : agentresult?.recordset?.[0]["agentname"]
+                        };
+                    }
+                    //tag
+                    let tagdata = [];
+                    queries.push({ "Tag SP": `${await enquiryquery.gettagdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let tagresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.gettagdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    if (tagresult?.recordset?.length > 0) {
+                        tagresult?.recordset?.map((record) =>
+                            tagdata.push({
+                                "TagId": record["tagid"] == "" || record["tagid"] == null ? null : record["tagid"].toLowerCase(),
+                                "TagName": record["tagname"] == "" || record["tagname"] == null ? null : record["tagname"],
+                                "TagCategoryId": record["tagcatgoryid"] == "" || record["tagcatgoryid"] == null ? null : record["tagcatgoryid"].toLowerCase(),
+                                "TagCategoryName": record["tagcategoryname"] == "" || record["tagcategoryname"] == null ? null : record["tagcategoryname"],
+                                //SP not providing below field
+                                // "SortOrder": record["SortOrder"] == "" || record["SortOrder"] == null ? null : record["SortOrder"],
+                            }));
+                    }
+                    //note
+                    queries.push({ "Notes SP": `${await enquiryquery.getnotedatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let noteresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getnotedatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    let totalnotescount = 0;
+                    let notesdata = [];
+                    if (noteresult?.recordset?.length > 0) {
+                        totalnotescount = noteresult.recordset.length;
+                        noteresult?.recordset?.map((note) => {
+                            notesdata.push(
+                                {
+                                    "NoteId": note["noteguid"] == "" || note["noteguid"] == null ? null : note["noteguid"].toLowerCase(),
+                                    "Title": note["title"] == "" || note["title"] == null ? null : note["title"],
+                                    "Description": note["description"] == "" || note["description"] == null ? null : note["description"],
+                                    "NoteTypeId": note["notestypeguid"] == "" || note["notestypeguid"] == null ? null : note["notestypeguid"].toLowerCase(),
+                                    "NoteType": note["name"] == "" || note["name"] == null ? null : note["name"],
+                                    "InfoId": note["infoid"] == "" || note["infoid"] == null ? 0 : note["infoid"],
+                                    //SP not providing below fields
+                                    // "InfoCode": note["infocode"] == "" || note["infocode"] == null ? null : note["infocode"],
+                                    // "TourId": note["tourid"] == "" || note["tourid"] == null ? 0 : note["tourid"],
+                                    // "ComponentId": note["componentid"] == "" || note["componentid"] == null ? null : note["componentid"],
+                                    // "DetailsId": note["detailsid"] == "" || note["detailsid"] == null ? null : note["detailsid"],
+                                    // "Createdby": note["createdby"] == "" || note["createdby"] == null ? null : note["createdby"],
+                                    "Passengerinformationid": note["passengerinformationid"] == "" || note["passengerinformationid"] == null ? 0 : note["passengerinformationid"],
+                                    //SP not providing below field
+                                    // "Createdon": note["createdon"] == "" || note["createdon"] == null ? null : note["createdon"],
+                                    "ShowOn": {
+                                        "Invoice": note["flaginvoice"] == 1 ? true : false,
+                                        "BookingVoucher": note["flagbookingvoucher"] == 1 ? true : false,
+                                        "SupplierNotifications": note["flagsuppliernotification"] == 1 ? true : false
+                                    }
+                                });
+                        });
+                    }
+
+                    //booking
+                    let bookingdata = [];
+                    queries.push({ "Booking SP": `${await enquiryquery.getbookingdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let bookingresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getbookingdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    bookingresult?.recordset?.map((booking) => {
+                        bookingdata.push({
+                            "BookingId": booking.bookingGuid == "" || booking.bookingGuid == null ? null : booking.bookingGuid.toLowerCase(),
+                            "ReferenceNo": booking.referencenumber == "" || booking.referencenumber == null ? null : booking.referencenumber,
+                            "IsQuote": booking.isquote == "" || booking.isquote == null ? false : booking.isquote,
+                            "Title": booking.title == "" || booking.title == null ? null : booking.title
+                        });
+                    });
+
+                    //task
+                    queries.push({ "Task SP": `${await enquiryquery.gettaskdatabyenquiryid(key, enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let taskdata = [];
+                    let taskresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.gettaskdatabyenquiryid(key, enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    let totaltaskcount = 0;
+                    if (taskresult?.recordset?.length > 0) {
+                        totalnotescount = noteresult.recordset.length;
+                        let taskids = [];
+                        taskresult?.recordset.map((task) => {
+                            taskids.push(task.assignedbyid);
+                            taskids.push(task.assignedtoid);
+                            taskids.push(task.createdby);
+                            taskids.push(task.updatedby);
+                        });
+                        let taskuserresult;
+                        if (taskids != "") {
+                            queries.push({ "User for task SP": `${await enquiryquery.getuserbyids(taskids)}` });
+                            taskuserresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getuserbyids(taskids), appversion, url);
+                        }
+                        for (const record of taskresult?.recordset) {
+                            let assignedby, assignedbyname = "";
+                            let createdbyid, createdbyname = "";
+                            let UpdatedByid, UpdatedByname = "";
+                            let assignedtodata = [];
+                            //storing task details in user array id vise
+                            taskuserresult?.recordset?.map((user) => {
+                                if (user.userid == record["assignedbyid"]) {
+                                    assignedby = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase() ?? null;
+                                    assignedbyname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname ?? null;
+                                }
+                                //Dispaly one or more recoreds
+                                record["assignedtoid"] == "" || record["assignedtoid"] == null ? null : record["assignedtoid"].split(",").map((assign) => {
+                                    if (user.userid == assign) {
+                                        assignedtodata.push({
+                                            "User": {
+                                                "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                                "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                            }
+                                        });
+                                    }
+                                });
+                                if (user.userid == record["createdby"]) {
+                                    createdbyid = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase() ?? null;
+                                    createdbyname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname ?? null;
+                                }
+                                if (user.userid == record["updatedby"]) {
+                                    UpdatedByid = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase();
+                                    UpdatedByname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname;
+                                }
+                            });
+                            taskdata.push({
+                                "TaskId": record["taskguid"] == "" || record["taskguid"] == null ? null : record["taskguid"].toLowerCase(),
+                                "ReferenceNo": record["referenceno"] == "" || record["referenceno"] == null ? null : record["referenceno"],
+                                "TaskName": record["taskname"] == "" || record["taskname"] == null ? null : record["taskname"],
+                                "TaskType": record["tasktype"] == "" || record["tasktype"] == null ? null : record["tasktype"],
+                                "TaskDescription": record["taskdescription"] == "" || record["taskdescription"] == null ? null : record["taskdescription"],
+                                // below fields are not shown in swagger
+                                // "Customer": record["customer"] == "" || record["customer"] == null ? null : record["customer"],
+                                // "LeadPassenger": record["leadpassenger"] == "" || record["leadpassenger"] == null ? null : record["leadpassenger"],
+                                // "Priority": record["priority"] == "" || record["priority"] == null ? null : record["priority"],
+                                // "Status": record["status"] == "" || record["status"] == null ? null : record["status"],
+                                // "LinkedTo": record["infocode"] == "" || record["infocode"] == null ? null : record["infocode"],
+                                // "LinkedReferenceId": record["infoid"] == "" || record["infoid"] == null ? null : record["infoid"],
+
+                                "AssignedBy": {
+                                    "User": {
+                                        "UserId": assignedby == "" || assignedby == null ? null : assignedby,
+                                        "Name": assignedbyname == "" || assignedbyname == null ? null : assignedbyname
+                                    }
+                                },
+                                "AssignedTo": assignedtodata,
+                                "CreatedBy": {
+                                    "User": {
+                                        "UserId": createdbyid == "" || createdbyid == null ? null : createdbyid,
+                                        "Name": createdbyname == "" || createdbyname == null ? null : createdbyname
+                                    }
+                                },
+                                "CreatedDate": record["createdon"]?.toISOString().replace('Z', '') == "" || record["createdon"]?.toISOString().replace('Z', '') == null ? null : record["createdon"]?.toISOString().replace('Z', ''),
+                                "UpdatedBy": {
+                                    "User": {
+                                        "UserId": UpdatedByid == "" || UpdatedByid == null ? null : UpdatedByid,
+                                        "Name": UpdatedByname == "" || UpdatedByname == null ? null : UpdatedByname
+                                    }
+                                },
+                                "UpdatedDate": record["updatedon"]?.toISOString().replace('Z', '') == "" || record["updatedon"]?.toISOString().replace('Z', '') == null ? null : record["updatedon"]?.toISOString().replace('Z', ''),
+                                "StartDate": record["startdate"].toISOString().replace('Z', '') == "" || record["startdate"].toISOString().replace('Z', '') == null ? null : record["startdate"].toISOString().replace('Z', '').slice(0, -4),
+                                "EndDate": record["enddate"].toISOString().replace('Z', '') == "" || record["enddate"].toISOString().replace('Z', '') == null ? null : record["enddate"].toISOString().replace('Z', '').slice(0, -4),
+                                "Tags": []
+                            });
+
+                        }
+                    }
+                    // initialize data in json format
+                    enquirylist.Enquiries = ({
+                        "EnquiryId": enquiryresult?.recordset[0]["enquiryguid"] == "" || enquiryresult?.recordset[0]["enquiryguid"] == null ? null : enquiryresult?.recordset[0]["enquiryguid"].toLowerCase(),
+                        "Title": enquiryresult?.recordset[0]["title"] == "" || enquiryresult?.recordset[0]["title"] == null ? null : enquiryresult?.recordset[0]["title"],
+                        "ReferenceNo": enquiryresult?.recordset[0]["referenceno"] == "" || enquiryresult?.recordset[0]["referenceno"] == null ? null : enquiryresult?.recordset[0]["referenceno"],
+                        "ExternalReference": enquiryresult?.recordset[0]["externalreference"] == "" || enquiryresult?.recordset[0]["externalreference"] == null ? null : enquiryresult?.recordset[0]["externalreference"],
+                        "EnquiryDate": enquiryresult?.recordset[0]["enquirydate"] == "" || enquiryresult?.recordset[0]["enquirydate"] == null ? null : enquiryresult?.recordset[0]["enquirydate"],
+                        "Description": enquiryresult?.recordset[0]["description"] == "" || enquiryresult?.recordset[0]["description"] == null ? null : enquiryresult?.recordset[0]["description"],
+                        "PipelineStage": {
+                            "PipelineStageId": enquiryresult?.recordset[0]["pipelinestageid"] == "" || enquiryresult?.recordset[0]["pipelinestageid"] == null ? null : enquiryresult?.recordset[0]["pipelinestageid"].toLowerCase(),
+                            "Code": enquiryresult?.recordset[0]["pipelinestagecode"] == "" || enquiryresult?.recordset[0]["pipelinestagecode"] == null ? null : enquiryresult?.recordset[0]["pipelinestagecode"],
+                            "StageName": enquiryresult?.recordset[0]["pipelinestagename"] == "" || enquiryresult?.recordset[0]["pipelinestagename"] == null ? null : enquiryresult?.recordset[0]["pipelinestagename"]
+                        },
+                        "SellChannel": {
+                            "SellChannelId": enquiryresult?.recordset[0]["sellchannelid"] == "" || enquiryresult?.recordset[0]["sellchannelid"] == null ? null : enquiryresult?.recordset[0]["sellchannelid"].toLowerCase(),
+                            "Code": enquiryresult?.recordset[0]["sellchannelcode"] == "" || enquiryresult?.recordset[0]["sellchannelcode"] == null ? null : enquiryresult?.recordset[0]["sellchannelcode"],
+                            "Name": enquiryresult?.recordset[0]["sellchannelname"] == "" || enquiryresult?.recordset[0]["sellchannelname"] == null ? null : enquiryresult?.recordset[0]["sellchannelname"]
+                        },
+                        "SourceOfEnquiry": {
+                            "SourceOfEnquiryId": enquiryresult?.recordset[0]["sourceofenquiryid"] == "" || enquiryresult?.recordset[0]["sourceofenquiryid"] == null ? null : enquiryresult?.recordset[0]["sourceofenquiryid"].toLowerCase(),
+                            "Name": enquiryresult?.recordset[0]["sourceofenquiryname"] == "" || enquiryresult?.recordset[0]["sourceofenquiryname"] == null ? null : enquiryresult?.recordset[0]["sourceofenquiryname"],
+                            "Description": enquiryresult?.recordset[0]["sourceofenquirydescription"] == "" || enquiryresult?.recordset[0]["sourceofenquirydescription"] == null ? null : enquiryresult?.recordset[0]["sourceofenquirydescription"]
+                        },
+                        "Traveller": {
+                            "Adult": enquiryresult?.recordset[0]["noofadult"] == "" || enquiryresult?.recordset[0]["noofadult"] == null ? 0 : enquiryresult?.recordset[0]["noofadult"],
+                            "Children": enquiryresult?.recordset[0]["noofchild"] == "" || enquiryresult?.recordset[0]["noofchild"] == null ? 0 : enquiryresult?.recordset[0]["noofchild"],
+                            "Infant": enquiryresult?.recordset[0]["noofinfant"] == "" || enquiryresult?.recordset[0]["noofinfant"] == null ? 0 : enquiryresult?.recordset[0]["noofinfant"]
+                        },
+                        "Currency": currencydata,
+                        "AssignTo": assigntouseriddata,
+                        "Visibility": enquiryresult?.recordset[0]["visibility"] == "" || enquiryresult?.recordset[0]["visibility"] == null ? null : enquiryresult?.recordset[0]["visibility"],
+                        "SharedWith": sharedwithidsdata,
+                        "Agent": agentdata,
+                        "Customer": customerdata,
+                        "Status": enquiryresult?.recordset[0]["status"] == "" || enquiryresult?.recordset[0]["status"] == null ? null : enquiryresult?.recordset[0]["status"],
+                        "CreatedBy": createdbyuseriddata,
+                        "UpdatedBy": updatedbyuseriddata,
+                        "CreatedDate": enquiryresult?.recordset[0]["createddate"] == "" || enquiryresult?.recordset[0]["createddate"] == null ? null : enquiryresult?.recordset[0]["createddate"],
+                        "UpdatedDate": enquiryresult?.recordset[0]["updateddate"] == "" || enquiryresult?.recordset[0]["updateddate"] == null ? null : enquiryresult?.recordset[0]["updateddate"],
+                        "TotalTasks": totaltaskcount,
+                        "Tasks": taskdata,
+                        "Tags": tagdata,
+                        "TotalNotes": totalnotescount,
+                        "Notes": notesdata,
+                        "Bookings": bookingdata
+                    });
+                    //success logs will generate if flag is on
+                    if (config.enquiry_api_logs == "ON") {
+                        let resAPI = await apicommoncontroller.createfullapilog(url, JSON.stringify(queries, null, 4), JSON.stringify(enquirylist, null, 4), "");
+                        apicommoncontroller.dologs(resAPI, fname, pathname);
+                    }
+                    return enquirylist;
+                } else {
+                    if (config.enquiry_api_logs == "ON") {
+                        let resAPI = await apicommoncontroller.createfullapilog(url, JSON.stringify(queries, null, 4), JSON.stringify({ APIError: "No record found." }), "");
+                        apicommoncontroller.dologs(resAPI, fname, pathname);
+                    }
+                    return ({ APIError: "No record found" });
+                }
+            } else {
+                return data;
+            }
+        } catch (error) {
+            // Handle error safely and add logs
+            apicommoncontroller.geterror(error, fname, pathname, JSON.stringify(queries, null, 4));
+            return ({ APIError: error.stack });
+        }
+    }
+
+    // Get all Enquiries details
+    async getenquiry(token, appversion, clientid, servicelocator) {
+        pathname = `/${appversion}/infrastructure/repositories/enquiries`;
+        url = config.enquiry_services_endpoint + `/${appversion}/enquiries`;
+        fname = "getenquiry";
+        queries = [];
+        rights = "read";
+        try {
+            // call this to get database credentials
+            let data = await axiosfunction.apivalidationfunction(token, code, rights, clientid);
+            let enquiryresult;
+            let enquirylist = { Enquiry: [] };
+
+            // if data apierror is undefined then get enquiry details by guid
+            if (data.APIError === undefined) {
+                const key = data.dbdata.data.sha1encryptkey;
+
+                //call updatefromdatabase of database in orm with dbdata and query
+                queries.push({ "Enquiry SP": `${await enquiryquery.getenquirybyid(guid)}` });
+                enquiryresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getenquirybyid(guid), appversion, url);
+                if (enquiryresult?.recordset?.length > 0) {
+                    let currencyids = [], agentids = [], tagids = [], userids = [], enquiryids = [], customerids = [];
+                    for (const record of enquiryresult?.recordset) {
+                        currencyids.push(record.currencyid);
+                        userids.push(record.assigntouserid, record.sharedwithids, record.createdbyuserid, record.updatedbyuserid);
+                        agentids.push(record.agentid);
+                        customerids.push(record.customerid);
+                        enquiryids.push(record.enquiryid);
+                    }
+                    //getting Currency detail
+                    queries.push({ "Currency SP": `${await enquiryquery.getcurrencybyid(enquiryresult?.recordset[0]["currencyid"] ?? NULL)}` });
+                    let currencyresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getcurrencybyid(enquiryresult?.recordset[0]["currencyid"] ?? NULL), appversion, url);
+                    let currencydata = {};
+                    if (currencyresult?.recordset?.length > 0) {
+                        currencydata = {
+                            "CurrencyId": currencyresult?.recordset[0]["currencyguid"] == "" || currencyresult?.recordset[0]["currencyguid"] == null ? null : currencyresult?.recordset[0]["currencyguid"].toLowerCase(),
+                            "Name": currencyresult?.recordset[0]["currencyname"] == "" || currencyresult?.recordset[0]["currencyname"] == null ? null : currencyresult?.recordset[0]["currencyname"],
+                            "Code": currencyresult?.recordset[0]["currencycode"] == "" || currencyresult?.recordset[0]["currencycode"] == null ? null : currencyresult?.recordset[0]["currencycode"],
+                            "Symbol": currencyresult?.recordset[0]["currencysymbol"] == "" || currencyresult?.recordset[0]["currencysymbol"] == null ? null : currencyresult?.recordset[0]["currencysymbol"],
+                            "IsDefault": currencyresult?.recordset[0]["flagdefault"] == "" || currencyresult?.recordset[0]["flagdefault"] == null ? null : currencyresult?.recordset[0]["flagdefault"],
+                            "Active": currencyresult?.recordset[0]["flagactive"] == "" || currencyresult?.recordset[0]["flagactive"] == null ? null : currencyresult?.recordset[0]["flagactive"]
+                        };
+                    }
+                    //getting user data for assigned to user,created by user id, updated by user, shared with users
+                    let userids = [enquiryresult?.recordset[0]["assigntouserid"], enquiryresult?.recordset[0]["sharedwithids"], enquiryresult?.recordset[0]["createdbyuserid"], enquiryresult?.recordset[0]["updatedbyuserid"]];
+                    queries.push({ "User SP": `${await enquiryquery.getuserbyids(userids)}` });
+                    let userresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getuserbyids(userids), appversion, url);
+                    let assigntouseriddata = {};
+                    let createdbyuseriddata = {};
+                    let updatedbyuseriddata = {};
+                    let sharedwithidsdata = { User: [] };
+                    userresult?.recordset?.map((user) => {
+                        //assigned to data
+                        if (user.userid == enquiryresult?.recordset[0]["assigntouserid"]) {
+                            assigntouseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //created by user
+                        if (user.userid == enquiryresult?.recordset[0]["createdbyuserid"]) {
+                            createdbyuseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //updated by user
+                        if (user.userid == enquiryresult?.recordset[0]["updatedbyuserid"]) {
+                            updatedbyuseriddata = {
+                                "User": {
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                }
+                            };
+                        }
+                        //share with users
+                        enquiryresult?.recordset[0]["sharedwithids"].split(",").map((shareuser) => {
+                            if (user.userid == shareuser) {
+                                sharedwithidsdata.User.push({
+                                    "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                    "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                });
+                            }
+                        });
+                    });
+
+                    //get customer data
+                    let customerdata = {};
+                    queries.push({ "Customer SP": `${await enquiryquery.getcustomerbycustomerid(key, enquiryresult?.recordset[0]["customerid"])}` });
+                    let customerresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getcustomerbycustomerid(key, enquiryresult?.recordset[0]["customerid"]), appversion, url);
+                    if (customerresult?.recordset?.length > 0) {
+                        customerdata = {
+                            "FirstName": customerresult?.recordset?.[0]["firstname"] == "" || customerresult?.recordset?.[0]["firstname"] == null ? null : customerresult?.recordset?.[0]["firstname"],
+                            "MiddleName": customerresult?.recordset?.[0]["middlename"] == "" || customerresult?.recordset?.[0]["middlename"] == null ? null : customerresult?.recordset?.[0]["middlename"],
+                            "LastName": customerresult?.recordset?.[0]["lastname"] == "" || customerresult?.recordset?.[0]["lastname"] == null ? null : customerresult?.recordset?.[0]["lastname"],
+                            "Gender": customerresult?.recordset?.[0]["gender"] == "" || customerresult?.recordset?.[0]["gender"] == null ? null : customerresult?.recordset?.[0]["gender"],
+                            "Email": customerresult?.recordset?.[0]["email"] == "" || customerresult?.recordset?.[0]["email"] == null ? null : customerresult?.recordset?.[0]["email"]
+                        };
+                    }
+
+                    //get agent data
+                    let agentdata = {};
+                    queries.push({ "Agent SP": `${await enquiryquery.getagentbyagentid(enquiryresult?.recordset[0]["agentid"])}` });
+                    let agentresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getagentbyagentid(enquiryresult?.recordset[0]["agentid"]), appversion, url);
+                    if (agentresult?.recordset?.length > 0) {
+                        agentdata = {
+                            "CompanyName": agentresult?.recordset?.[0]["Company"] == "" || agentresult?.recordset?.[0]["Company"] == null ? null : agentresult?.recordset?.[0]["Company"],
+                            "Email": agentresult?.recordset?.[0]["email"] == "" || agentresult?.recordset?.[0]["email"] == null ? null : agentresult?.recordset?.[0]["email"],
+                            "Name": agentresult?.recordset?.[0]["agentname"] == "" || agentresult?.recordset?.[0]["agentname"] == null ? null : agentresult?.recordset?.[0]["agentname"]
+                        };
+                    }
+                    //tag
+                    let tagdata = [];
+                    queries.push({ "Tag SP": `${await enquiryquery.gettagdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let tagresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.gettagdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    if (tagresult?.recordset?.length > 0) {
+                        tagresult?.recordset?.map((record) =>
+                            tagdata.push({
+                                "TagId": record["tagid"] == "" || record["tagid"] == null ? null : record["tagid"].toLowerCase(),
+                                "TagName": record["tagname"] == "" || record["tagname"] == null ? null : record["tagname"],
+                                "TagCategoryId": record["tagcatgoryid"] == "" || record["tagcatgoryid"] == null ? null : record["tagcatgoryid"].toLowerCase(),
+                                "TagCategoryName": record["tagcategoryname"] == "" || record["tagcategoryname"] == null ? null : record["tagcategoryname"],
+                                //SP not providing below field
+                                // "SortOrder": record["SortOrder"] == "" || record["SortOrder"] == null ? null : record["SortOrder"],
+                            }));
+                    }
+                    //note
+                    queries.push({ "Notes SP": `${await enquiryquery.getnotedatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let noteresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getnotedatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    let totalnotescount = 0;
+                    let notesdata = [];
+                    if (noteresult?.recordset?.length > 0) {
+                        totalnotescount = noteresult.recordset.length;
+                        noteresult?.recordset?.map((note) => {
+                            notesdata.push(
+                                {
+                                    "NoteId": note["noteguid"] == "" || note["noteguid"] == null ? null : note["noteguid"].toLowerCase(),
+                                    "Title": note["title"] == "" || note["title"] == null ? null : note["title"],
+                                    "Description": note["description"] == "" || note["description"] == null ? null : note["description"],
+                                    "NoteTypeId": note["notestypeguid"] == "" || note["notestypeguid"] == null ? null : note["notestypeguid"].toLowerCase(),
+                                    "NoteType": note["name"] == "" || note["name"] == null ? null : note["name"],
+                                    "InfoId": note["infoid"] == "" || note["infoid"] == null ? 0 : note["infoid"],
+                                    "Passengerinformationid": note["passengerinformationid"] == "" || note["passengerinformationid"] == null ? 0 : note["passengerinformationid"],
+                                    "ShowOn": {
+                                        "Invoice": note["flaginvoice"] == 1 ? true : false,
+                                        "BookingVoucher": note["flagbookingvoucher"] == 1 ? true : false,
+                                        "SupplierNotifications": note["flagsuppliernotification"] == 1 ? true : false
+                                    }
+                                });
+                        });
+                    }
+
+                    //booking
+                    let bookingdata = [];
+                    queries.push({ "Booking SP": `${await enquiryquery.getbookingdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let bookingresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getbookingdatabyenquiryid(enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    bookingresult?.recordset?.map((booking) => {
+                        bookingdata.push({
+                            "BookingId": booking.bookingGuid == "" || booking.bookingGuid == null ? null : booking.bookingGuid.toLowerCase(),
+                            "ReferenceNo": booking.referencenumber == "" || booking.referencenumber == null ? null : booking.referencenumber,
+                            "IsQuote": booking.isquote == "" || booking.isquote == null ? false : booking.isquote,
+                            "Title": booking.title == "" || booking.title == null ? null : booking.title
+                        });
+                    });
+
+                    //task
+                    queries.push({ "Task SP": `${await enquiryquery.gettaskdatabyenquiryid(key, enquiryresult?.recordset[0]["enquiryid"])}` });
+                    let taskdata = [];
+                    let taskresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.gettaskdatabyenquiryid(key, enquiryresult?.recordset[0]["enquiryid"]), appversion, url);
+                    let totaltaskcount = 0;
+                    if (taskresult?.recordset?.length > 0) {
+                        totalnotescount = noteresult.recordset.length;
+                        let taskids = [];
+                        taskresult?.recordset.map((task) => {
+                            taskids.push(task.assignedbyid);
+                            taskids.push(task.assignedtoid);
+                            taskids.push(task.createdby);
+                            taskids.push(task.updatedby);
+                        });
+                        let taskuserresult;
+                        if (taskids != "") {
+                            queries.push({ "User for task SP": `${await enquiryquery.getuserbyids(taskids)}` });
+                            taskuserresult = await database.updatefromdatabase(data.dbdata, await enquiryquery.getuserbyids(taskids), appversion, url);
+                        }
+                        for (const record of taskresult?.recordset) {
+                            let assignedby, assignedbyname = "";
+                            let createdbyid, createdbyname = "";
+                            let UpdatedByid, UpdatedByname = "";
+                            let assignedtodata = [];
+                            //storing task details in user array id vise
+                            taskuserresult?.recordset?.map((user) => {
+                                if (user.userid == record["assignedbyid"]) {
+                                    assignedby = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase() ?? null;
+                                    assignedbyname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname ?? null;
+                                }
+                                //Dispaly one or more recoreds
+                                record["assignedtoid"] == "" || record["assignedtoid"] == null ? null : record["assignedtoid"].split(",").map((assign) => {
+                                    if (user.userid == assign) {
+                                        assignedtodata.push({
+                                            "User": {
+                                                "UserId": user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase(),
+                                                "Name": user.userfullname == "" || user.userfullname == null ? null : user.userfullname
+                                            }
+                                        });
+                                    }
+                                });
+                                if (user.userid == record["createdby"]) {
+                                    createdbyid = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase() ?? null;
+                                    createdbyname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname ?? null;
+                                }
+                                if (user.userid == record["updatedby"]) {
+                                    UpdatedByid = user.userguid == "" || user.userguid == null ? null : user.userguid.toLowerCase();
+                                    UpdatedByname = user.userfullname == "" || user.userfullname == null ? null : user.userfullname;
+                                }
+                            });
+                            
+                            taskdata.push({
+                                "TaskId": record["taskguid"] == "" || record["taskguid"] == null ? null : record["taskguid"].toLowerCase(),
+                                "ReferenceNo": record["referenceno"] == "" || record["referenceno"] == null ? null : record["referenceno"],
+                                "TaskName": record["taskname"] == "" || record["taskname"] == null ? null : record["taskname"],
+                                "TaskType": record["tasktype"] == "" || record["tasktype"] == null ? null : record["tasktype"],
+                                "TaskDescription": record["taskdescription"] == "" || record["taskdescription"] == null ? null : record["taskdescription"],
+                                // below fields are not shown in swagger
+                                // "Customer": record["customer"] == "" || record["customer"] == null ? null : record["customer"],
+                                // "LeadPassenger": record["leadpassenger"] == "" || record["leadpassenger"] == null ? null : record["leadpassenger"],
+                                // "Priority": record["priority"] == "" || record["priority"] == null ? null : record["priority"],
+                                // "Status": record["status"] == "" || record["status"] == null ? null : record["status"],
+                                // "LinkedTo": record["infocode"] == "" || record["infocode"] == null ? null : record["infocode"],
+                                // "LinkedReferenceId": record["infoid"] == "" || record["infoid"] == null ? null : record["infoid"],
+
+                                "AssignedBy": {
+                                    "User": {
+                                        "UserId": assignedby == "" || assignedby == null ? null : assignedby,
+                                        "Name": assignedbyname == "" || assignedbyname == null ? null : assignedbyname
+                                    }
+                                },
+                                "AssignedTo": assignedtodata,
+                                "CreatedBy": {
+                                    "User": {
+                                        "UserId": createdbyid == "" || createdbyid == null ? null : createdbyid,
+                                        "Name": createdbyname == "" || createdbyname == null ? null : createdbyname
+                                    }
+                                },
+                                "CreatedDate": record["createdon"]?.toISOString().replace('Z', '') == "" || record["createdon"]?.toISOString().replace('Z', '') == null ? null : record["createdon"]?.toISOString().replace('Z', ''),
+                                "UpdatedBy": {
+                                    "User": {
+                                        "UserId": UpdatedByid == "" || UpdatedByid == null ? null : UpdatedByid,
+                                        "Name": UpdatedByname == "" || UpdatedByname == null ? null : UpdatedByname
+                                    }
+                                },
+                                "UpdatedDate": record["updatedon"]?.toISOString().replace('Z', '') == "" || record["updatedon"]?.toISOString().replace('Z', '') == null ? null : record["updatedon"]?.toISOString().replace('Z', ''),
+                                "StartDate": record["startdate"].toISOString().replace('Z', '') == "" || record["startdate"].toISOString().replace('Z', '') == null ? null : record["startdate"].toISOString().replace('Z', '').slice(0, -4),
+                                "EndDate": record["enddate"].toISOString().replace('Z', '') == "" || record["enddate"].toISOString().replace('Z', '') == null ? null : record["enddate"].toISOString().replace('Z', '').slice(0, -4),
+                                "Tags": []
+                            });
+
+                        }
+                    }
+                    // initialize data in json format
+                    enquirylist.Enquiry.push({
+                        "EnquiryId": enquiryresult?.recordset[0]["enquiryguid"] == "" || enquiryresult?.recordset[0]["enquiryguid"] == null ? null : enquiryresult?.recordset[0]["enquiryguid"].toLowerCase(),
+                        "Title": enquiryresult?.recordset[0]["title"] == "" || enquiryresult?.recordset[0]["title"] == null ? null : enquiryresult?.recordset[0]["title"],
+                        "ReferenceNo": enquiryresult?.recordset[0]["referenceno"] == "" || enquiryresult?.recordset[0]["referenceno"] == null ? null : enquiryresult?.recordset[0]["referenceno"],
+                        "ExternalReference": enquiryresult?.recordset[0]["externalreference"] == "" || enquiryresult?.recordset[0]["externalreference"] == null ? null : enquiryresult?.recordset[0]["externalreference"],
+                        "EnquiryDate": enquiryresult?.recordset[0]["enquirydate"] == "" || enquiryresult?.recordset[0]["enquirydate"] == null ? null : enquiryresult?.recordset[0]["enquirydate"],
+                        "Description": enquiryresult?.recordset[0]["description"] == "" || enquiryresult?.recordset[0]["description"] == null ? null : enquiryresult?.recordset[0]["description"],
+                        "PipelineStage": {
+                            "PipelineStageId": enquiryresult?.recordset[0]["pipelinestageid"] == "" || enquiryresult?.recordset[0]["pipelinestageid"] == null ? null : enquiryresult?.recordset[0]["pipelinestageid"].toLowerCase(),
+                            "Code": enquiryresult?.recordset[0]["pipelinestagecode"] == "" || enquiryresult?.recordset[0]["pipelinestagecode"] == null ? null : enquiryresult?.recordset[0]["pipelinestagecode"],
+                            "StageName": enquiryresult?.recordset[0]["pipelinestagename"] == "" || enquiryresult?.recordset[0]["pipelinestagename"] == null ? null : enquiryresult?.recordset[0]["pipelinestagename"]
+                        },
+                        "SellChannel": {
+                            "SellChannelId": enquiryresult?.recordset[0]["sellchannelid"] == "" || enquiryresult?.recordset[0]["sellchannelid"] == null ? null : enquiryresult?.recordset[0]["sellchannelid"].toLowerCase(),
+                            "Code": enquiryresult?.recordset[0]["sellchannelcode"] == "" || enquiryresult?.recordset[0]["sellchannelcode"] == null ? null : enquiryresult?.recordset[0]["sellchannelcode"],
+                            "Name": enquiryresult?.recordset[0]["sellchannelname"] == "" || enquiryresult?.recordset[0]["sellchannelname"] == null ? null : enquiryresult?.recordset[0]["sellchannelname"]
+                        },
+                        "SourceOfEnquiry": {
+                            "SourceOfEnquiryId": enquiryresult?.recordset[0]["sourceofenquiryid"] == "" || enquiryresult?.recordset[0]["sourceofenquiryid"] == null ? null : enquiryresult?.recordset[0]["sourceofenquiryid"].toLowerCase(),
+                            "Name": enquiryresult?.recordset[0]["sourceofenquiryname"] == "" || enquiryresult?.recordset[0]["sourceofenquiryname"] == null ? null : enquiryresult?.recordset[0]["sourceofenquiryname"],
+                            "Description": enquiryresult?.recordset[0]["sourceofenquirydescription"] == "" || enquiryresult?.recordset[0]["sourceofenquirydescription"] == null ? null : enquiryresult?.recordset[0]["sourceofenquirydescription"]
+                        },
+                        "Traveller": {
+                            "Adult": enquiryresult?.recordset[0]["noofadult"] == "" || enquiryresult?.recordset[0]["noofadult"] == null ? 0 : enquiryresult?.recordset[0]["noofadult"],
+                            "Children": enquiryresult?.recordset[0]["noofchild"] == "" || enquiryresult?.recordset[0]["noofchild"] == null ? 0 : enquiryresult?.recordset[0]["noofchild"],
+                            "Infant": enquiryresult?.recordset[0]["noofinfant"] == "" || enquiryresult?.recordset[0]["noofinfant"] == null ? 0 : enquiryresult?.recordset[0]["noofinfant"]
+                        },
+                        "Currency": currencydata,
+                        "AssignTo": assigntouseriddata,
+                        "Visibility": enquiryresult?.recordset[0]["visibility"] == "" || enquiryresult?.recordset[0]["visibility"] == null ? null : enquiryresult?.recordset[0]["visibility"],
+                        "SharedWith": sharedwithidsdata,
+                        "Agent": agentdata,
+                        "Customer": customerdata,
+                        "Status": enquiryresult?.recordset[0]["status"] == "" || enquiryresult?.recordset[0]["status"] == null ? null : enquiryresult?.recordset[0]["status"],
+                        "CreatedBy": createdbyuseriddata,
+                        "UpdatedBy": updatedbyuseriddata,
+                        "CreatedDate": enquiryresult?.recordset[0]["createddate"] == "" || enquiryresult?.recordset[0]["createddate"] == null ? null : enquiryresult?.recordset[0]["createddate"],
+                        "UpdatedDate": enquiryresult?.recordset[0]["updateddate"] == "" || enquiryresult?.recordset[0]["updateddate"] == null ? null : enquiryresult?.recordset[0]["updateddate"],
+                        "TotalTasks": totaltaskcount,
+                        "Tasks": taskdata,
+                        "Tags": tagdata,
+                        "TotalNotes": totalnotescount,
+                        "Notes": notesdata,
+                        "Bookings": bookingdata
+                    });
+                    //success logs will generate if flag is on
+                    if (config.enquiry_api_logs == "ON") {
+                        let resAPI = await apicommoncontroller.createfullapilog(url, JSON.stringify(queries, null, 4), JSON.stringify(enquirylist, null, 4), "");
+                        apicommoncontroller.dologs(resAPI, fname, pathname);
+                    }
+                    return enquirylist;
+                } else {
+                    if (config.enquiry_api_logs == "ON") {
+                        let resAPI = await apicommoncontroller.createfullapilog(url, JSON.stringify(queries, null, 4), JSON.stringify({ APIError: "No record found." }), "");
+                        apicommoncontroller.dologs(resAPI, fname, pathname);
+                    }
+                    return ({ APIError: "No record found" });
+                }
+            } else {
+                return data;
+            }
+        } catch (error) {
+            // Handle error safely and add logs
+            apicommoncontroller.geterror(error, fname, pathname, JSON.stringify(queries, null, 4));
+            return ({ APIError: error.stack });
+        }
+    }
+};
