@@ -1,0 +1,246 @@
+const apicommon = require("./apicommoncontroller");
+const config = require("../../config");
+const axios = require("axios");
+const Validation = require("../utility/validation");
+const https = require("https");
+const agent = new https.Agent({
+    rejectUnauthorized: false,
+});
+const NodeCache = require("node-cache");
+// Create a new instance of the NodeCache class with a standard TTL of 24 hours (86400 seconds)
+const appcache = new NodeCache({ stdTTL: 86400 });
+
+module.exports = {
+    //axios get function
+    async axiosget(fname, pathname, URL, headers, data) {
+        return axios({ url: URL, method: "get", headers: headers, data: data, httpsAgent: agent })
+            .then(async (result) => {
+                let res;
+                // if dbCred is present log only domain name else log all data
+                if (fname == "/getDbCred") {
+                    res = await apicommon.createfullapilog(URL, " ", JSON.stringify({ DomainName: result.data.data?.domainname }), " ");
+                } else {
+                    if (data == undefined) {
+                        res = await apicommon.createfullapilog(URL, " ", JSON.stringify(result.data), " ");
+                    } else {
+                        res = await apicommon.createfullapilog(URL, JSON.stringify(data), JSON.stringify(result.data), " ");
+                    }
+                }
+                apicommon.dologs(res, `${fname}Axios`, pathname);
+                return result.data;
+            })
+            .catch((error) => {
+                console.log(error);
+                let errormessage = { APIError: error.stack };
+                // Handle error safely and add logs
+                apicommon.geterror(error, fname, pathname, "");
+                return errormessage;
+            });
+    },
+
+    //axios post function
+    async axiospost(fname, pathname, URL, headers, data) {
+        return axios({ url: URL, method: "POST", headers: headers, data: data, httpsAgent: agent })
+            .then(async (result) => {
+                let res;
+                // if dbCred is present log only domain name else log all data
+                if (fname == "/getDbCred") {
+                    res = await apicommon.createfullapilog(URL, " ", JSON.stringify({ DomainName: result.data.data?.domainname }), " ");
+                } else {
+                    if (data == undefined) {
+                        res = await apicommon.createfullapilog(URL, " ", JSON.stringify(result.data), " ");
+                    } else {
+                        res = await apicommon.createfullapilog(URL, JSON.stringify(data), JSON.stringify(result.data), " ");
+                    }
+                }
+                apicommon.dologs(res, `${fname}Axios`, pathname);
+                return result.data;
+            })
+            .catch((error) => {
+                console.log(error.stack);
+                let errormessage = { APIError: error.stack };
+                // Handle error safely and add logs
+                apicommon.geterror(error, fname, pathname, "");
+                return errormessage;
+            });
+    },
+
+    //axios put function
+    async axiosput(fname, pathname, URL, headers, data) {
+        return axios({ url: URL, method: "PUT", headers: headers, data: data, httpsAgent: agent })
+            .then(async (result) => {
+                let res;
+                // if dbCred is present log only domain name else log all data
+                if (fname == "/getDbCred") {
+                    res = await apicommon.createfullapilog(URL, " ", JSON.stringify({ DomainName: result.data.data?.domainname }), " ");
+                } else {
+                    if (data == undefined) {
+                        res = await apicommon.createfullapilog(URL, " ", JSON.stringify(result.data), " ");
+                    } else {
+                        res = await apicommon.createfullapilog(URL, JSON.stringify(data), JSON.stringify(result.data), " ");
+                    }
+                }
+                apicommon.dologs(res, `${fname}Axios`, pathname);
+                return result.data;
+            })
+            .catch((error) => {
+                console.log(error.stack);
+                let errormessage = { APIError: error.stack };
+                // Handle error safely and add logs
+                apicommon.geterror(error, fname, pathname, "");
+                return errormessage;
+            });
+    },
+
+    //axios delete function
+    async axiosdelete(fname, pathname, URL, headers, data) {
+        return axios({ url: URL, method: "DELETE", headers: headers, data: data, httpsAgent: agent })
+            .then(async (result) => {
+                let res;
+                // if dbCred is present log only domain name else log all data
+                if (fname == "/getDbCred") {
+                    res = await apicommon.createfullapilog(URL, " ", JSON.stringify({ DomainName: result.data.data?.domainname }), " ");
+                } else {
+                    if (data == undefined) {
+                        res = await apicommon.createfullapilog(URL, " ", JSON.stringify(result.data), " ");
+                    } else {
+                        res = await apicommon.createfullapilog(URL, JSON.stringify(data), JSON.stringify(result.data), " ");
+                    }
+                }
+                apicommon.dologs(res, `${fname}Axios`, pathname);
+                return result.data;
+            })
+            .catch((error) => {
+                console.log(error.stack);
+                let errormessage = { APIError: error.stack };
+                // Handle error safely and add logs
+                apicommon.geterror(error, fname, pathname, "");
+                return errormessage;
+            });
+    },
+    // Bellow function will validate token and then return dbcred
+    async apivalidationfunction(token, code, rights, clientid) {
+        let fname = "/getDbCred";
+        let pathname = "/getDbCred/details";
+        try {
+            // validation of token
+            let Token = await Validation.blankfieldcheck(token, "Token");
+            if (Token?.APIError === undefined) {
+                //calls the database extension url for fetching dbCreds
+                //token varefication
+                let tokenStatus = await this.verifytoken(Token, fname, pathname, code, clientid);
+                //checking status
+                if (tokenStatus?.status === true) {
+                    //checking rights
+                    if (tokenStatus?.response?.rights?.access_rights?.[rights]) {
+                        //validate access token
+                        let accesstoken = await Validation.TokenStatus(tokenStatus);
+                        //if status code is not 400
+                        if (accesstoken?.APIError === undefined) {
+                            // Varible for concat dbcred with clientid
+                            let dbcred = "dbcred";
+
+                            // Check if the dbcred data for the specified client ID exists in the cache
+                            if (appcache.get(clientid + dbcred)) {
+                                // Retrieve the cached "dbcred" data for the specified client ID
+                                let dbdata = appcache.get(clientid + dbcred);
+                                // Extract the encryption key from the cached "dbcred" data, if available
+                                let key = dbdata?.data?.sha1encryptkey;
+                                return { dbdata: dbdata, key: key };
+                            } else {
+                                //geting database credential
+                                let dbdata = await this.axiospost(fname, pathname, tokenStatus?.response?.client?.dburl, {}, { "dbkey": tokenStatus?.response?.client?.dbkey });
+                                dbdata = { data: dbdata.Data };
+                                // let dbdata = await this.axiosget(fname, pathname, url, headers);
+                                dbdata = await Validation.blankfieldcheck(dbdata, "DBdata");
+                                //if dbdata is not found return error else rerturn data.
+                                if (dbdata?.APIError == undefined) {
+                                    // Cache the retrieved "dbdata" using the client ID as part of the key
+                                    appcache.set(clientid + dbcred, dbdata);
+                                    // Extract the encryption key from the cached "dbcred" data, if available
+                                    let key = dbdata?.data?.sha1encryptkey;
+                                    //varefying key
+                                    key = await Validation.Key(dbdata);
+                                    if (key?.APIError == undefined) {
+                                        return { dbdata: dbdata, key: key };
+                                    } else {
+                                        // Handle error safely and add logs
+                                        apicommon.geterror(key, fname, pathname, "");
+                                        return key;
+                                    }
+                                } else {
+                                    // Handle error safely and add logs
+                                    apicommon.geterror(dbdata, fname, pathname, "");
+                                    return dbdata;
+                                }
+                            }
+                        } else {
+                            // Handle error safely and add logs
+                            apicommon.geterror(accesstoken, fname, pathname, "");
+                            return accesstoken;
+                        }
+
+                    }
+                    else {
+                        // Handle error safely and add logs
+                        const errmsg = { APIError: "You don't have rights to access this endpoint" };
+                        apicommon.geterror(errmsg, fname, pathname, "");
+                        return (errmsg);
+                    }
+                } else {
+                    // Handle error safely and add logs
+                    apicommon.geterror(tokenStatus?.errorMessage, fname, pathname, "");
+                    return ({ APIError: tokenStatus?.errorMessage });
+                    // return tokenStatus;
+                }
+            } else {
+                // Handle error safely and add logs
+                apicommon.geterror(Token, fname, pathname, "");
+                return Token;
+            }
+        } catch (error) {
+            // Handle error safely and add logs
+            apicommon.geterror(error, fname, pathname, "");
+            return { APIError: error.stack };
+        }
+    },
+    // This function is used for token verification.
+    async verifytoken(Token, fname, pathname, code, clientid) {
+        try {
+            // Define headers for the HTTP request, including authorization and custom headers.
+            const headers = {
+                Authorization: `Bearer ${Token}`,
+                "x-api-key": `${config.X_API_key}`,
+                "clientId": clientid
+            };
+            // Construct the URL for token verification using a configuration value.
+            let url = `${config.Token_Verification_url}`;
+            // Perform an HTTP GET request using Axios, passing headers and data.
+            return axios({
+                url: url,
+                method: "get",
+                headers: headers,
+                httpsAgent: agent,
+                data: {
+                    "code": code
+                }
+            })
+                // If the HTTP request is successful, return the data from the response.
+                .then(async (result) => {
+                    return result.data;
+                })
+                .catch((error) => {
+                    // If there is an error in the HTTP request, handle it here.
+                    // Log the error and return an error message object.
+                    apicommon.geterror(error, fname, pathname, "");
+                    let errormessage = { APIError: "" + error.stack + "" };
+                    return errormessage;
+                });
+        } catch (error) {
+            // If there is an error in the try block, handle it here.
+            // Log the error and continue.
+            apicommon.geterror(error, fname, pathname, "");
+            console.log(error);
+        }
+    },
+};
